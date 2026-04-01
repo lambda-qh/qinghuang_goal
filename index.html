@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#6366f1">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect fill='%236366f1' width='192' height='192' rx='40'/%3E%3Ctext x='96' y='125' font-size='100' text-anchor='middle' fill='white'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E">
+    <title>LifeGoals</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        * { -webkit-tap-highlight-color: transparent; }
+        body { 
+            font-family: 'Noto Sans SC', sans-serif; 
+            overscroll-behavior-y: none;
+            background: #f8fafc;
+        }
+        .safe-top { padding-top: env(safe-area-inset-top); }
+        .safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom) + 80px); }
+        .pb-nav { padding-bottom: calc(env(safe-area-inset-bottom) + 80px); }
+        .bottom-nav {
+            padding-bottom: env(safe-area-inset-bottom);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        .card-shadow { box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+        .btn-active:active { transform: scale(0.96); }
+        .transition-all-300 { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        /* Sheet animation */
+        .sheet {
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .sheet.open { transform: translateY(0); }
+        .sheet-backdrop {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .sheet-backdrop.open { opacity: 1; pointer-events: auto; }
+        
+        /* Hide scrollbar */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Progress bar animation */
+        .progress-bar { transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        /* Chart container */
+        .chart-scroll {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        /* Pulse for important actions */
+        @keyframes softPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+            50% { box-shadow: 0 0 0 12px rgba(99, 102, 241, 0); }
+        }
+        .pulse-ring { animation: softPulse 2s infinite; }
+        
+        .nav-item.active { color: #6366f1; }
+        .nav-item.active .nav-icon { background: #e0e7ff; }
+    </style>
+</head>
+<body class="text-slate-800 antialiased">
+
+    <!-- Install Banner -->
+    <div id="installBanner" class="hidden fixed top-0 left-0 right-0 z-50 bg-indigo-600 text-white px-4 py-3 safe-top">
+        <div class="flex items-center justify-between max-w-lg mx-auto">
+            <div class="flex items-center gap-3">
+                <span class="text-xl">🎯</span>
+                <div class="text-sm">
+                    <div class="font-medium">添加到主屏幕</div>
+                    <div class="text-indigo-200 text-xs">像 App 一样快速打开，离线也能用</div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="dismissInstall()" class="text-indigo-200 text-sm px-2">忽略</button>
+                <button onclick="installPWA()" class="bg-white text-indigo-600 text-sm font-medium px-4 py-1.5 rounded-full btn-active">安装</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main id="mainContent" class="max-w-lg mx-auto min-h-screen pb-nav relative">
+        
+        <!-- Header -->
+        <header class="sticky top-0 z-30 bg-slate-50/95 backdrop-blur-md safe-top px-5 py-4 border-b border-slate-100">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-xl font-bold text-slate-900">LifeGoals</h1>
+                    <p class="text-xs text-slate-500" id="todayDate"></p>
+                </div>
+                <div class="text-right">
+                    <div class="text-2xl font-bold text-indigo-600" id="yearProgressText"></div>
+                    <div class="text-xs text-slate-400">年度已过</div>
+                </div>
+            </div>
+            <!-- Year progress mini bar -->
+            <div class="mt-3 w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                <div id="yearProgressBar" class="progress-bar bg-indigo-500 h-1.5 rounded-full" style="width: 0%"></div>
+            </div>
+        </header>
+
+        <!-- TAB: Home -->
+        <section id="tab-home" class="px-5 py-5 space-y-5">
+            <!-- Quick Stats -->
+            <div class="grid grid-cols-2 gap-3">
+                <div class="bg-white rounded-2xl p-4 card-shadow">
+                    <div class="text-xs text-slate-500 mb-1">本年度剩余</div>
+                    <div class="text-2xl font-bold text-slate-800"><span id="daysLeft">0</span> <span class="text-sm font-normal text-slate-400">天</span></div>
+                </div>
+                <div class="bg-white rounded-2xl p-4 card-shadow">
+                    <div class="text-xs text-slate-500 mb-1">已记录</div>
+                    <div class="text-2xl font-bold text-indigo-600"><span id="totalRecords">0</span> <span class="text-sm font-normal text-slate-400">次</span></div>
+                </div>
+            </div>
+
+            <!-- Quick Action Button -->
+            <button onclick="openRecordSheet()" class="w-full py-4 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-2xl font-semibold text-lg card-shadow pulse-ring btn-active flex items-center justify-center gap-2">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                快速打卡
+            </button>
+
+            <!-- Goals Dashboard -->
+            <div>
+                <h2 class="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+                    📊 目标进度
+                </h2>
+                <div id="goalsDashboard" class="space-y-3">
+                    <!-- Cards -->
+                </div>
+            </div>
+
+            <!-- Comparison Chart -->
+            <div class="bg-white rounded-2xl p-4 card-shadow">
+                <h2 class="text-base font-bold text-slate-800 mb-2">⚖️ 进度对比</h2>
+                <p class="text-xs text-slate-500 mb-3">完成进度 vs 时间进度</p>
+                <div class="chart-scroll">
+                    <div class="relative h-48" style="min-width: 320px;">
+                        <canvas id="comparisonChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: Report -->
+        <section id="tab-report" class="hidden px-5 py-5 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-lg font-bold text-slate-800">📰 本周周报</h2>
+                <span class="text-xs text-slate-500 bg-slate-100 px-3 py-1 rounded-full" id="weekRange"></span>
+            </div>
+            <div id="weeklyReportContent" class="space-y-4">
+                <!-- Report -->
+            </div>
+        </section>
+
+        <!-- TAB: Records -->
+        <section id="tab-records" class="hidden px-5 py-5 space-y-4">
+            <h2 class="text-lg font-bold text-slate-800">📝 最近记录</h2>
+            <div class="bg-white rounded-2xl card-shadow overflow-hidden">
+                <div id="recordsList" class="divide-y divide-slate-100">
+                    <!-- Records -->
+                </div>
+                <div id="emptyRecords" class="hidden text-center py-12 text-slate-400">
+                    <div class="text-4xl mb-2">📝</div>
+                    <div class="text-sm">还没有记录</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: Settings -->
+        <section id="tab-settings" class="hidden px-5 py-5 space-y-5 safe-bottom">
+            <!-- Add Goal -->
+            <div class="bg-white rounded-2xl p-4 card-shadow">
+                <h2 class="text-base font-bold text-slate-800 mb-3">➕ 添加新目标</h2>
+                <form id="goalForm" onsubmit="addGoal(event)" class="space-y-3">
+                    <input type="text" id="goalName" placeholder="目标名称（如：运动）" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 text-base" required>
+                    <div class="flex gap-3">
+                        <input type="number" id="goalTarget" placeholder="数量（如：100）" min="1" class="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 text-base" required>
+                        <input type="text" id="goalUnit" placeholder="单位（次）" class="w-28 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 text-base" required>
+                    </div>
+                    <button type="submit" class="w-full py-3 bg-indigo-600 text-white font-medium rounded-xl btn-active">保存目标</button>
+                </form>
+            </div>
+
+            <!-- Goals List -->
+            <div class="bg-white rounded-2xl p-4 card-shadow">
+                <h2 class="text-base font-bold text-slate-800 mb-3">⚙️ 我的目标</h2>
+                <div id="goalsList" class="space-y-2">
+                    <!-- Goals -->
+                </div>
+            </div>
+
+            <!-- Data Management -->
+            <div class="bg-white rounded-2xl p-4 card-shadow">
+                <h2 class="text-base font-bold text-slate-800 mb-3">💾 数据管理</h2>
+                <div class="grid grid-cols-2 gap-3">
+                    <button onclick="exportData()" class="py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 btn-active flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        导出备份
+                    </button>
+                    <label class="py-3 px-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 btn-active flex items-center justify-center gap-2 cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        导入恢复
+                        <input type="file" id="importFile" class="hidden" accept=".json" onchange="importData(this)">
+                    </label>
+                </div>
+                <p class="text-xs text-slate-400 mt-3">数据仅存储在本设备，建议定期导出备份</p>
+            </div>
+        </section>
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white/90 border-t border-slate-200 bottom-nav z-40">
+        <div class="max-w-lg mx-auto flex items-center justify-around py-2">
+            <button onclick="switchTab('home')" class="nav-item active flex flex-col items-center gap-1 px-4 py-1 text-slate-400 transition-colors" data-tab="home">
+                <div class="nav-icon w-10 h-10 rounded-full flex items-center justify-center transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                </div>
+                <span class="text-[10px] font-medium">首页</span>
+            </button>
+            <button onclick="switchTab('report')" class="nav-item flex flex-col items-center gap-1 px-4 py-1 text-slate-400 transition-colors" data-tab="report">
+                <div class="nav-icon w-10 h-10 rounded-full flex items-center justify-center transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                </div>
+                <span class="text-[10px] font-medium">周报</span>
+            </button>
+            <button onclick="switchTab('records')" class="nav-item flex flex-col items-center gap-1 px-4 py-1 text-slate-400 transition-colors" data-tab="records">
+                <div class="nav-icon w-10 h-10 rounded-full flex items-center justify-center transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                </div>
+                <span class="text-[10px] font-medium">记录</span>
+            </button>
+            <button onclick="switchTab('settings')" class="nav-item flex flex-col items-center gap-1 px-4 py-1 text-slate-400 transition-colors" data-tab="settings">
+                <div class="nav-icon w-10 h-10 rounded-full flex items-center justify-center transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                </div>
+                <span class="text-[10px] font-medium">我的</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Record Sheet (Bottom Sheet) -->
+    <div id="recordSheetBackdrop" class="sheet-backdrop fixed inset-0 bg-black/40 z-50" onclick="closeRecordSheet()"></div>
+    <div id="recordSheet" class="sheet fixed bottom-0 left-0 right-0 bg-white rounded-t-3xl z-50 max-w-lg mx-auto">
+        <div class="p-6 pb-10">
+            <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-6"></div>
+            <h3 class="text-xl font-bold text-slate-800 mb-5 text-center">快速打卡</h3>
+            
+            <form id="recordForm" onsubmit="addRecord(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-2">选择目标</label>
+                    <div id="recordGoalButtons" class="flex flex-wrap gap-2">
+                        <!-- Goal buttons -->
+                    </div>
+                    <input type="hidden" id="recordGoal" required>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-2">日期</label>
+                    <input type="date" id="recordDate" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 text-base" required>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-2">备注（可选）</label>
+                    <input type="text" id="recordNote" placeholder="比如：跑步5公里..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 text-base">
+                </div>
+                
+                <button type="submit" class="w-full py-4 bg-indigo-600 text-white font-semibold rounded-xl btn-active mt-2">
+                    确认打卡 ✓
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 px-5 py-3 bg-slate-800 text-white rounded-full shadow-xl opacity-0 pointer-events-none transition-all duration-300 z-50 text-sm font-medium whitespace-nowrap">
+        <span id="toastMsg">操作成功</span>
+    </div>
+
+    <script>
+        // --- State ---
+        const STORAGE_KEY = 'lifeGoalsData_v1';
+        let appData = { year: new Date().getFullYear(), goals: [], records: [] };
+        let comparisonChartInstance = null;
+        let deferredPrompt = null;
+
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            registerSW();
+            document.getElementById('todayDate').textContent = formatDate(new Date());
+            document.getElementById('recordDate').value = formatDateISO(new Date());
+            renderAll();
+            
+            // PWA Install prompt
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                deferredPrompt = e;
+                if (!localStorage.getItem('installDismissed')) {
+                    document.getElementById('installBanner').classList.remove('hidden');
+                }
+            });
+        });
+
+        function registerSW() {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('sw.js').catch(err => console.log('SW registration failed', err));
+            }
+        }
+
+        function loadData() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    const currentYear = new Date().getFullYear();
+                    if (parsed.year !== currentYear) {
+                        if (confirm(`数据年份为 ${parsed.year}，是否开启 ${currentYear} 新年度并清空旧记录？（目标会保留）`)) {
+                            parsed.year = currentYear;
+                            parsed.records = [];
+                        } else {
+                            parsed.year = currentYear;
+                        }
+                    }
+                    appData = { ...appData, ...parsed };
+                } catch (e) { console.error(e); }
+            }
+        }
+
+        function saveData() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+        }
+
+        function renderAll() {
+            renderTimeProgress();
+            renderGoalsDashboard();
+            renderRecordSheetButtons();
+            renderRecordsList();
+            renderWeeklyReport();
+            renderComparisonChart();
+            renderGoalsList();
+            document.getElementById('totalRecords').textContent = appData.records.length;
+        }
+
+        // --- Helpers ---
+        function formatDate(date) {
+            const d = new Date(date);
+            const week = ['日','一','二','三','四','五','六'];
+            return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日 周${week[d.getDay()]}`;
+        }
+        function formatDateISO(date) {
+            const d = new Date(date);
+            const tzOffset = d.getTimezoneOffset() * 60000;
+            return new Date(d - tzOffset).toISOString().slice(0, 10);
+        }
+        function generateId() { return '_' + Math.random().toString(36).substr(2, 9); }
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').textContent = msg;
+            toast.classList.remove('opacity-0', 'pointer-events-none');
+            setTimeout(() => toast.classList.add('opacity-0', 'pointer-events-none'), 2200);
+        }
+
+        // --- Tabs ---
+        function switchTab(tabName) {
+            ['home', 'report', 'records', 'settings'].forEach(t => {
+                document.getElementById('tab-' + t).classList.add('hidden');
+                const btn = document.querySelector(`.nav-item[data-tab="${t}"]`);
+                btn.classList.remove('active');
+            });
+            document.getElementById('tab-' + tabName).classList.remove('hidden');
+            document.querySelector(`.nav-item[data-tab="${tabName}"]`).classList.add('active');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // --- Time Progress ---
+        function getYearProgress() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const start = new Date(year, 0, 1);
+            const end = new Date(year + 1, 0, 1);
+            const total = end - start;
+            const passed = now - start;
+            return {
+                totalDays: Math.ceil(total / 86400000),
+                passedDays: Math.floor(passed / 86400000),
+                percent: (passed / total) * 100
+            };
+        }
+
+        function renderTimeProgress() {
+            const p = getYearProgress();
+            document.getElementById('daysLeft').textContent = p.totalDays - p.passedDays;
+            document.getElementById('yearProgressText').textContent = p.percent.toFixed(1) + '%';
+            document.getElementById('yearProgressBar').style.width = p.percent + '%';
+        }
+
+        // --- Record Sheet ---
+        function openRecordSheet() {
+            if (appData.goals.length === 0) {
+                showToast('请先添加目标');
+                switchTab('settings');
+                return;
+            }
+            document.getElementById('recordSheet').classList.add('open');
+            document.getElementById('recordSheetBackdrop').classList.add('open');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeRecordSheet() {
+            document.getElementById('recordSheet').classList.remove('open');
+            document.getElementById('recordSheetBackdrop').classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
+        function renderRecordSheetButtons() {
+            const container = document.getElementById('recordGoalButtons');
+            const hiddenInput = document.getElementById('recordGoal');
+            
+            container.innerHTML = appData.goals.map(g => `
+                <button type="button" 
+                    onclick="selectGoal('${g.id}', '${g.color}')" 
+                    data-goal="${g.id}"
+                    class="goal-chip px-4 py-2 rounded-full border-2 border-slate-200 text-slate-600 text-sm font-medium transition-all btn-active">
+                    ${g.name}
+                </button>
+            `).join('');
+            
+            if (appData.goals.length > 0) {
+                selectGoal(appData.goals[0].id, appData.goals[0].color);
+            }
+        }
+
+        function selectGoal(id, color) {
+            document.getElementById('recordGoal').value = id;
+            document.querySelectorAll('.goal-chip').forEach(btn => {
+                if (btn.dataset.goal === id) {
+                    btn.style.borderColor = color;
+                    btn.style.backgroundColor = color + '15';
+                    btn.style.color = color;
+                } else {
+                    btn.style.borderColor = '#e2e8f0';
+                    btn.style.backgroundColor = 'transparent';
+                    btn.style.color = '#475569';
+                }
+            });
+        }
+
+        function addRecord(e) {
+            e.preventDefault();
+            const goalId = document.getElementById('recordGoal').value;
+            const date = document.getElementById('recordDate').value;
+            const note = document.getElementById('recordNote').value.trim();
+            
+            appData.records.push({ id: generateId(), goalId, date, note, createdAt: new Date().toISOString() });
+            saveData();
+            document.getElementById('recordNote').value = '';
+            closeRecordSheet();
+            renderAll();
+            showToast('打卡成功！继续保持 💪');
+        }
+
+        function deleteRecord(id) {
+            if (!confirm('删除这条记录？')) return;
+            appData.records = appData.records.filter(r => r.id !== id);
+            saveData();
+            renderAll();
+            showToast('已删除');
+        }
+
+        // --- Goal Management ---
+        function addGoal(e) {
+            e.preventDefault();
+            const name = document.getElementById('goalName').value.trim();
+            const target = parseInt(document.getElementById('goalTarget').value);
+            const unit = document.getElementById('goalUnit').value.trim();
+            
+            appData.goals.push({ id: generateId(), name, target, unit, color: getRandomColor() });
+            saveData();
+            e.target.reset();
+            renderAll();
+            showToast('目标添加成功');
+        }
+
+        function deleteGoal(id) {
+            if (!confirm('确定删除该目标及所有记录？')) return;
+            appData.goals = appData.goals.filter(g => g.id !== id);
+            appData.records = appData.records.filter(r => r.goalId !== id);
+            saveData();
+            renderAll();
+            showToast('目标已删除');
+        }
+
+        function getRandomColor() {
+            const colors = ['#6366f1', '#ec4899', '#14b8a6', '#f59e0b', '#8b5cf6', '#ef4444', '#3b82f6', '#10b981'];
+            return colors[Math.floor(Math.random() * colors.length)];
+        }
+
+        function renderGoalsList() {
+            const container = document.getElementById('goalsList');
+            if (appData.goals.length === 0) {
+                container.innerHTML = '<div class="text-center py-4 text-slate-400 text-sm">暂无目标</div>';
+                return;
+            }
+            container.innerHTML = appData.goals.map(g => {
+                const count = appData.records.filter(r => r.goalId === g.id).length;
+                return `
+                <div class="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                    <div class="flex items-center gap-3">
+                        <div class="w-3 h-3 rounded-full" style="background-color: ${g.color}"></div>
+                        <div>
+                            <div class="font-medium text-slate-800">${g.name}</div>
+                            <div class="text-xs text-slate-500">已完成 ${count} / ${g.target} ${g.unit}</div>
+                        </div>
+                    </div>
+                    <button onclick="deleteGoal('${g.id}')" class="text-slate-400 hover:text-red-500 px-2 py-1 text-sm">删除</button>
+                </div>
+                `;
+            }).join('');
+        }
+
+        // --- Dashboard ---
+        function renderGoalsDashboard() {
+            const container = document.getElementById('goalsDashboard');
+            if (appData.goals.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-white rounded-2xl p-8 card-shadow text-center">
+                        <div class="text-4xl mb-3">🎯</div>
+                        <div class="text-slate-800 font-medium mb-1">还没有目标</div>
+                        <div class="text-sm text-slate-500 mb-4">先去"我的"页面添加几个年度目标吧</div>
+                        <button onclick="switchTab('settings')" class="px-5 py-2 bg-indigo-600 text-white rounded-full text-sm font-medium">去添加</button>
+                    </div>
+                `;
+                return;
+            }
+            
+            const timePercent = getYearProgress().percent;
+            
+            container.innerHTML = appData.goals.map(g => {
+                const current = appData.records.filter(r => r.goalId === g.id).length;
+                const percent = Math.min((current / g.target) * 100, 100);
+                const diff = percent - timePercent;
+                let status = '', statusBg = '', statusColor = '';
+                
+                if (percent >= 100) {
+                    status = '已达成'; statusBg = 'bg-emerald-100'; statusColor = 'text-emerald-600';
+                } else if (diff >= 5) {
+                    status = '超前'; statusBg = 'bg-indigo-100'; statusColor = 'text-indigo-600';
+                } else if (diff <= -5) {
+                    status = '落后'; statusBg = 'bg-amber-100'; statusColor = 'text-amber-600';
+                } else {
+                    status = '正常'; statusBg = 'bg-slate-100'; statusColor = 'text-slate-600';
+                }
+                
+                return `
+                <div class="bg-white rounded-2xl p-4 card-shadow">
+                    <div class="flex items-start justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm" style="background-color: ${g.color}20; color: ${g.color}">
+                                ${g.name.charAt(0)}
+                            </div>
+                            <div>
+                                <div class="font-semibold text-slate-800">${g.name}</div>
+                                <div class="text-xs text-slate-400">${g.target} ${g.unit}</div>
+                            </div>
+                        </div>
+                        <span class="px-2.5 py-1 rounded-full text-xs font-semibold ${statusBg} ${statusColor}">${status}</span>
+                    </div>
+                    <div class="flex items-end justify-between mb-2">
+                        <div class="text-3xl font-bold text-slate-800">${current}</div>
+                        <div class="text-sm text-slate-500 mb-1">${percent.toFixed(0)}%</div>
+                    </div>
+                    <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                        <div class="progress-bar h-2.5 rounded-full" style="width: ${percent}%; background-color: ${g.color}"></div>
+                    </div>
+                    ${diff <= -10 ? `<div class="mt-3 text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">落后时间线 ${Math.abs(diff).toFixed(0)}%，建议多投入</div>` : ''}
+                    ${percent >= 100 ? `<div class="mt-3 text-xs text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg">🎉 恭喜达成年度目标！</div>` : ''}
+                </div>
+                `;
+            }).join('');
+        }
+
+        // --- Records List ---
+        function renderRecordsList() {
+            const container = document.getElementById('recordsList');
+            const empty = document.getElementById('emptyRecords');
+            const sorted = [...appData.records].sort((a, b) => new Date(b.date) - new Date(a.date));
+            
+            if (sorted.length === 0) {
+                container.innerHTML = '';
+                empty.classList.remove('hidden');
+                return;
+            }
+            empty.classList.add('hidden');
+            
+            container.innerHTML = sorted.map(r => {
+                const goal = appData.goals.find(g => g.id === r.goalId);
+                return `
+                <div class="flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium" style="background-color: ${goal ? goal.color + '20' : '#f1f5f9'}; color: ${goal ? goal.color : '#94a3b8'}">
+                            ${goal ? goal.name.charAt(0) : '?'}
+                        </div>
+                        <div>
+                            <div class="font-medium text-slate-800">${goal ? goal.name : '未知目标'}</div>
+                            <div class="text-xs text-slate-400">${r.date} ${r.note ? '· ' + r.note : ''}</div>
+                        </div>
+                    </div>
+                    <button onclick="deleteRecord('${r.id}')" class="text-slate-300 hover:text-red-500 p-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </div>
+                `;
+            }).join('');
+        }
+
+        // --- Comparison Chart ---
+        function renderComparisonChart() {
+            const ctx = document.getElementById('comparisonChart').getContext('2d');
+            const timePercent = getYearProgress().percent;
+            
+            if (comparisonChartInstance) comparisonChartInstance.destroy();
+            if (appData.goals.length === 0) return;
+            
+            comparisonChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: appData.goals.map(g => g.name),
+                    datasets: [
+                        {
+                            label: '完成进度',
+                            data: appData.goals.map(g => Math.min((appData.records.filter(r => r.goalId === g.id).length / g.target) * 100, 100)),
+                            backgroundColor: appData.goals.map(g => g.color),
+                            borderRadius: 6,
+                            barPercentage: 0.5,
+                        },
+                        {
+                            label: '时间进度',
+                            data: appData.goals.map(() => timePercent),
+                            backgroundColor: 'rgba(148, 163, 184, 0.25)',
+                            borderColor: 'rgba(148, 163, 184, 0.6)',
+                            borderWidth: 1,
+                            borderRadius: 6,
+                            barPercentage: 0.5,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label + ': ' + ctx.raw.toFixed(1) + '%'
+                            }
+                        }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, max: 100, grid: { color: 'rgba(0,0,0,0.03)' }, ticks: { font: { size: 10 } } },
+                        x: { grid: { display: false }, ticks: { font: { size: 11 } } }
+                    }
+                }
+            });
+        }
+
+        // --- Weekly Report ---
+        function getWeekBounds(date = new Date()) {
+            const d = new Date(date);
+            const day = d.getDay();
+            const diffToMonday = d.getDate() - day + (day === 0 ? -6 : 1);
+            const monday = new Date(d.setDate(diffToMonday));
+            monday.setHours(0,0,0,0);
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+            sunday.setHours(23,59,59,999);
+            return { monday, sunday };
+        }
+
+        function renderWeeklyReport() {
+            const { monday, sunday } = getWeekBounds();
+            document.getElementById('weekRange').textContent = `${formatDateISO(monday)} ~ ${formatDateISO(sunday)}`;
+            const container = document.getElementById('weeklyReportContent');
+            
+            if (appData.goals.length === 0) {
+                container.innerHTML = '<div class="text-slate-400 text-sm text-center py-8">还没有设置目标</div>';
+                return;
+            }
+            
+            const weekRecords = appData.records.filter(r => {
+                const rd = new Date(r.date);
+                return rd >= monday && rd <= sunday;
+            });
+            
+            const totalWeek = weekRecords.length;
+            const activeGoals = new Set(weekRecords.map(r => r.goalId)).size;
+            const topGoal = getTopGoalThisWeek(weekRecords);
+            const timePercent = getYearProgress().percent;
+            
+            let html = `
+            <div class="grid grid-cols-3 gap-3">
+                <div class="bg-indigo-50 rounded-2xl p-3 text-center">
+                    <div class="text-xl font-bold text-indigo-700">${totalWeek}</div>
+                    <div class="text-[10px] text-indigo-500">本周打卡</div>
+                </div>
+                <div class="bg-pink-50 rounded-2xl p-3 text-center">
+                    <div class="text-xl font-bold text-pink-700">${activeGoals}</div>
+                    <div class="text-[10px] text-pink-500">活跃目标</div>
+                </div>
+                <div class="bg-emerald-50 rounded-2xl p-3 text-center">
+                    <div class="text-sm font-bold text-emerald-700 truncate px-1">${topGoal || '-'}</div>
+                    <div class="text-[10px] text-emerald-500">最活跃</div>
+                </div>
+            </div>
+            `;
+            
+            html += `<div class="bg-white rounded-2xl p-4 card-shadow space-y-3">`;
+            appData.goals.forEach(g => {
+                const currentTotal = appData.records.filter(r => r.goalId === g.id).length;
+                const weekCount = weekRecords.filter(r => r.goalId === g.id).length;
+                const totalPercent = (currentTotal / g.target) * 100;
+                const diff = totalPercent - timePercent;
+                const remaining = Math.max(0, g.target - currentTotal);
+                const weeklyPace = remaining / Math.max(1, getYearProgress().totalDays - getYearProgress().passedDays) * 7;
+                
+                let advice = '', icon = '';
+                if (currentTotal >= g.target) { advice = '年度目标已达成！继续保持好习惯'; icon = '🎉'; }
+                else if (weekCount === 0) { advice = `本周未打卡，建议每周完成 ${Math.max(1, Math.ceil(weeklyPace))}${g.unit}`; icon = '⚠️'; }
+                else if (diff >= 5) { advice = `进度超前，本周完成 ${weekCount}${g.unit}`; icon = '✨'; }
+                else if (diff <= -5) { advice = `进度落后，本周完成 ${weekCount}${g.unit}，建议每周 ${Math.max(1, Math.ceil(weeklyPace))}${g.unit}`; icon = '📉'; }
+                else { advice = `进度正常，本周完成 ${weekCount}${g.unit}`; icon = '🆗'; }
+                
+                html += `
+                <div class="flex items-start gap-3 p-3 bg-slate-50 rounded-xl">
+                    <div class="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-sm" style="background-color: ${g.color}20; color: ${g.color}">${g.name.charAt(0)}</div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center justify-between mb-0.5">
+                            <span class="font-medium text-slate-800 text-sm">${g.name}</span>
+                            <span class="text-xs text-slate-400">+${weekCount} ${g.unit}</span>
+                        </div>
+                        <p class="text-xs text-slate-600 leading-relaxed">${icon} ${advice}</p>
+                    </div>
+                </div>
+                `;
+            });
+            html += `</div>`;
+            
+            const behind = appData.goals.filter(g => {
+                const p = (appData.records.filter(r => r.goalId === g.id).length / g.target) * 100;
+                return p - timePercent <= -5 && appData.records.filter(r => r.goalId === g.id).length < g.target;
+            });
+            
+            if (behind.length > 0) {
+                html += `
+                <div class="bg-amber-50 border border-amber-100 rounded-2xl p-4">
+                    <div class="font-semibold text-amber-800 text-sm mb-1">💡 下周重点</div>
+                    <p class="text-xs text-amber-700">${behind.map(g => g.name).join('、')} 进度落后，建议优先投入。</p>
+                </div>
+                `;
+            } else if (totalWeek > 0) {
+                html += `
+                <div class="bg-emerald-50 border border-emerald-100 rounded-2xl p-4">
+                    <div class="font-semibold text-emerald-800 text-sm mb-1">💡 本周总结</div>
+                    <p class="text-xs text-emerald-700">所有目标都在正常轨道上，继续保持！</p>
+                </div>
+                `;
+            }
+            
+            container.innerHTML = html;
+        }
+
+        function getTopGoalThisWeek(weekRecords) {
+            const counts = {};
+            weekRecords.forEach(r => counts[r.goalId] = (counts[r.goalId] || 0) + 1);
+            let topId = null, topCount = 0;
+            for (const [id, count] of Object.entries(counts)) {
+                if (count > topCount) { topCount = count; topId = id; }
+            }
+            const goal = appData.goals.find(g => g.id === topId);
+            return goal ? goal.name : null;
+        }
+
+        // --- Import / Export ---
+        function exportData() {
+            const blob = new Blob([JSON.stringify(appData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `life-goals-${appData.year}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('数据已导出');
+        }
+
+        function importData(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.goals && data.records) {
+                        appData = data;
+                        appData.year = new Date().getFullYear();
+                        saveData();
+                        renderAll();
+                        showToast('数据恢复成功');
+                    } else {
+                        alert('文件格式不正确');
+                    }
+                } catch (err) { alert('导入失败：' + err.message); }
+                input.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        // --- PWA Install ---
+        function installPWA() {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+            }
+            document.getElementById('installBanner').classList.add('hidden');
+        }
+
+        function dismissInstall() {
+            localStorage.setItem('installDismissed', 'true');
+            document.getElementById('installBanner').classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
