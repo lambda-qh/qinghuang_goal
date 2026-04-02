@@ -214,6 +214,34 @@
                 </div>
                 <p class="text-xs text-slate-400 mt-3">数据仅存储在本设备，建议定期导出备份</p>
             </div>
+
+            <!-- Bulk Initialize -->
+            <div class="bg-white rounded-2xl p-4 card-shadow">
+                <h2 class="text-base font-bold text-slate-800 mb-3">🚀 批量初始化</h2>
+                <p class="text-xs text-slate-500 mb-3">按格式输入目标名和完成数量，自动生成分布记录</p>
+                <textarea id="bulkInitText" rows="5" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 text-sm font-mono" placeholder="早睡:22&#10;运动:21&#10;电影/剧:10&#10;阅读:7&#10;桌游:17"></textarea>
+                <button onclick="bulkInitialize()" class="w-full mt-3 py-3 bg-indigo-600 text-white font-medium rounded-xl btn-active">一键初始化</button>
+            </div>
+
+            <!-- Cloud Sync -->
+            <div class="bg-white rounded-2xl p-4 card-shadow">
+                <h2 class="text-base font-bold text-slate-800 mb-3">☁️ 云端同步 (GitHub Gist)</h2>
+                <div class="space-y-3">
+                    <input type="password" id="githubToken" placeholder="GitHub Personal Access Token" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 text-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-slate-600">自动同步</span>
+                        <button id="autoSyncToggle" onclick="toggleAutoSync()" class="w-12 h-6 rounded-full bg-slate-300 relative transition-colors">
+                            <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform"></span>
+                        </button>
+                    </div>
+                    <div id="gistIdDisplay" class="hidden text-xs text-slate-500 bg-slate-50 px-3 py-2 rounded-lg break-all"></div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="createGistBackup()" class="py-3 bg-indigo-600 text-white text-sm font-medium rounded-xl btn-active">备份到云端</button>
+                        <button onclick="restoreFromGist()" class="py-3 bg-slate-100 text-slate-700 text-sm font-medium rounded-xl btn-active">从云端恢复</button>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-400 mt-3">Token 仅存在本机，通过 GitHub Gist 私密存储数据</p>
+            </div>
         </section>
     </main>
 
@@ -337,6 +365,9 @@
 
         function saveData() {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+            if (localStorage.getItem('lifeGoalsAutoSync') === 'true') {
+                debouncedSync();
+            }
         }
 
         function renderAll() {
@@ -347,6 +378,7 @@
             renderWeeklyReport();
             renderComparisonChart();
             renderGoalsList();
+            renderSyncStatus();
             document.getElementById('totalRecords').textContent = appData.records.length;
         }
 
@@ -834,6 +866,227 @@
         function dismissInstall() {
             localStorage.setItem('installDismissed', 'true');
             document.getElementById('installBanner').classList.add('hidden');
+        }
+
+        // --- Bulk Initialize ---
+        function bulkInitialize() {
+            const text = document.getElementById('bulkInitText').value.trim();
+            if (!text) { showToast('请输入初始化数据'); return; }
+            if (!confirm('这将批量生成历史记录，确定继续？')) return;
+            
+            const lines = text.split('\n').filter(l => l.trim());
+            const now = new Date();
+            const year = now.getFullYear();
+            const start = new Date(year, 0, 1);
+            const passedDays = Math.floor((now - start) / 86400000);
+            
+            let totalAdded = 0;
+            
+            lines.forEach(line => {
+                const parts = line.split(/[:：]/);
+                if (parts.length < 2) return;
+                const name = parts[0].trim();
+                const count = parseInt(parts[1].trim());
+                if (!name || isNaN(count) || count <= 0) return;
+                
+                const goal = appData.goals.find(g => g.name === name || g.name.includes(name) || name.includes(g.name));
+                if (!goal) { console.log('Goal not found:', name); return; }
+                
+                const step = passedDays / count;
+                for (let i = 0; i < count; i++) {
+                    const d = new Date(year, 0, 1);
+                    if (step >= 1) {
+                        d.setDate(1 + Math.min(Math.floor(i * step), passedDays));
+                    } else {
+                        d.setDate(1 + Math.floor(Math.random() * passedDays));
+                    }
+                    
+                    appData.records.push({
+                        id: generateId(),
+                        goalId: goal.id,
+                        date: formatDateISO(d),
+                        note: '初始化导入',
+                        createdAt: d.toISOString()
+                    });
+                    totalAdded++;
+                }
+            });
+            
+            saveData();
+            renderAll();
+            showToast(`成功初始化 ${totalAdded} 条记录`);
+        }
+
+        // --- GitHub Gist Sync ---
+        let syncTimeout;
+        function debouncedSync() {
+            clearTimeout(syncTimeout);
+            syncTimeout = setTimeout(() => syncToGist(), 3000);
+        }
+
+        async function syncToGist() {
+            const token = document.getElementById('githubToken').value.trim() || localStorage.getItem('githubToken');
+            const gistId = localStorage.getItem('lifeGoalsGistId');
+            if (!token) { showToast('请先输入 GitHub Token'); return; }
+            
+            if (!gistId) {
+                await createGistBackup();
+                return;
+            }
+            
+            try {
+                const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        files: {
+                            'lifegoals-backup.json': {
+                                content: JSON.stringify(appData, null, 2)
+                            }
+                        }
+                    })
+                });
+                if (res.ok) {
+                    showToast('已自动同步到云端 ☁️');
+                } else {
+                    const err = await res.json();
+                    console.error(err);
+                    showToast('同步失败: ' + (err.message || '未知错误'));
+                }
+            } catch (e) {
+                showToast('网络错误，同步失败');
+            }
+        }
+
+        async function createGistBackup() {
+            const tokenInput = document.getElementById('githubToken');
+            const token = tokenInput.value.trim();
+            if (!token) { showToast('请输入 GitHub Token'); return; }
+            localStorage.setItem('githubToken', token);
+            
+            const gistId = localStorage.getItem('lifeGoalsGistId');
+            if (gistId) {
+                await syncToGist();
+                return;
+            }
+            
+            try {
+                const res = await fetch('https://api.github.com/gists', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        description: 'LifeGoals 自动备份',
+                        public: false,
+                        files: {
+                            'lifegoals-backup.json': {
+                                content: JSON.stringify(appData, null, 2)
+                            }
+                        }
+                    })
+                });
+                const data = await res.json();
+                if (res.ok && data.id) {
+                    localStorage.setItem('lifeGoalsGistId', data.id);
+                    showToast('云端备份创建成功 ☁️');
+                    renderSyncStatus();
+                } else {
+                    showToast('创建失败: ' + (data.message || '未知错误'));
+                }
+            } catch (e) {
+                showToast('网络错误');
+            }
+        }
+
+        async function restoreFromGist() {
+            let gistId = localStorage.getItem('lifeGoalsGistId');
+            if (!gistId) {
+                gistId = prompt('请输入你的 Gist ID（首次恢复需要）：');
+                if (!gistId) return;
+                localStorage.setItem('lifeGoalsGistId', gistId);
+                renderSyncStatus();
+            }
+            const token = document.getElementById('githubToken').value.trim() || localStorage.getItem('githubToken');
+            
+            try {
+                const headers = { 'Accept': 'application/vnd.github.v3+json' };
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const res = await fetch(`https://api.github.com/gists/${gistId}`, { headers });
+                const data = await res.json();
+                if (res.ok && data.files && data.files['lifegoals-backup.json']) {
+                    const content = data.files['lifegoals-backup.json'].content;
+                    const parsed = JSON.parse(content);
+                    if (parsed.goals && parsed.records) {
+                        appData = parsed;
+                        appData.year = new Date().getFullYear();
+                        saveData();
+                        renderAll();
+                        showToast('云端恢复成功');
+                    } else {
+                        alert('备份数据格式错误');
+                    }
+                } else {
+                    showToast('恢复失败: ' + (data.message || '未知错误'));
+                }
+            } catch (e) {
+                showToast('网络错误');
+            }
+        }
+
+        function toggleAutoSync() {
+            const current = localStorage.getItem('lifeGoalsAutoSync') === 'true';
+            const next = !current;
+            localStorage.setItem('lifeGoalsAutoSync', next ? 'true' : 'false');
+            renderSyncStatus();
+            if (next) {
+                const token = document.getElementById('githubToken').value.trim() || localStorage.getItem('githubToken');
+                if (!token) { showToast('请先输入 Token 再开启自动同步'); toggleAutoSync(); return; }
+                syncToGist();
+                showToast('已开启自动同步');
+            } else {
+                showToast('已关闭自动同步');
+            }
+        }
+
+        function renderSyncStatus() {
+            const autoSync = localStorage.getItem('lifeGoalsAutoSync') === 'true';
+            const gistId = localStorage.getItem('lifeGoalsGistId');
+            const token = localStorage.getItem('githubToken');
+            const btn = document.getElementById('autoSyncToggle');
+            const display = document.getElementById('gistIdDisplay');
+            
+            if (btn) {
+                if (autoSync) {
+                    btn.classList.remove('bg-slate-300');
+                    btn.classList.add('bg-indigo-500');
+                    btn.querySelector('span').style.transform = 'translateX(24px)';
+                } else {
+                    btn.classList.add('bg-slate-300');
+                    btn.classList.remove('bg-indigo-500');
+                    btn.querySelector('span').style.transform = 'translateX(0)';
+                }
+            }
+            
+            const tokenInput = document.getElementById('githubToken');
+            if (tokenInput && token) {
+                tokenInput.value = token;
+            }
+            
+            if (display) {
+                if (gistId) {
+                    display.classList.remove('hidden');
+                    display.textContent = 'Gist ID: ' + gistId;
+                } else {
+                    display.classList.add('hidden');
+                }
+            }
         }
     </script>
 </body>
